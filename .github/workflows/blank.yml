@@ -1,0 +1,91 @@
+# This is a basic workflow to help you get started with Actions
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-win:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Inno Setup (Chocolatey)
+      run: choco install innosetup -y
+
+    - name: Configure CMake (Visual Studio 2022 x64)
+      run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+    - name: Build Release
+      run: cmake --build build --config Release -- /m
+
+    - name: Prepare artefacts directory (find .vst3 and optional standalone exe)
+      shell: pwsh
+      run: |
+        # find first .vst3 bundle
+        $vst3 = Get-ChildItem -Path . -Recurse -Force -Filter *.vst3 | Select-Object -First 1
+        if (-not $vst3) { Write-Host "No .vst3 found"; exit 1 }
+        $destVst3 = Join-Path $PWD "build\RoomCorrector_artefacts\Release\VST3\$($vst3.Name)"
+        New-Item -ItemType Directory -Force -Path $destVst3 | Out-Null
+        Copy-Item -Path $vst3.FullName -Destination $destVst3 -Recurse -Force
+
+        # optional standalone exe
+        $exe = Get-ChildItem -Path . -Recurse -Force -Include "*.exe" | Where-Object { $_.Name -like "*Room*" -and $_.FullName -notmatch "installer\\Output" } | Select-Object -First 1
+        if ($exe) {
+          $destExe = Join-Path $PWD "build\RoomCorrector_artefacts\Release\Standalone"
+          New-Item -ItemType Directory -Force -Path $destExe | Out-Null
+          Copy-Item -Path $exe.FullName -Destination $destExe -Force
+        }
+
+    - name: Build installer with Inno Setup
+      shell: pwsh
+      run: |
+        $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+        if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe" }
+        if (-not (Test-Path $iscc)) { Write-Error "ISCC not found. Ensure Inno Setup installed."; exit 1 }
+        & $iscc "installer\RoomCorrector.iss"
+
+    - name: Upload installer artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: RoomCorrector-Installer
+        path: installer/Output/RoomCorrector-Setup.exe
+        
+name: CI
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+
+      # Runs a single command using the runners shell
+      - name: Run a one-line script
+        run: echo Hello, world!
+
+      # Runs a set of commands using the runners shell
+      - name: Run a multi-line script
+        run: |
+          echo Add other actions to build,
+          echo test, and deploy your project.
